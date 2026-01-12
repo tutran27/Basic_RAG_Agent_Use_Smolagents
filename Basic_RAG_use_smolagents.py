@@ -3,33 +3,22 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from smolagents import CodeAgent, InferenceClientModel, Tool
+from dotenv import load_dotenv
 import os
+
+load_dotenv()
 
 model=InferenceClientModel("Qwen/Qwen3-4B-Instruct-2507", api_key=os.getenv("HF_API_KEY"))
 
-# 1. Load document
-loader=PyPDFLoader(r"tu_Tuong_HCM.pdf")
-docs=loader.load()
-
-# 2. Split document
-text_splitter=RecursiveCharacterTextSplitter(
-    chunk_size=512,
-    chunk_overlap=128,
-    length_function=len,
-    separators=["\n\n", "\n", " ", ""]
-)
-splitted_docs=text_splitter.split_documents(docs)
-
-
-# 3. Vectorize document
+# 3. Call vector store
 embedding_model='huyydangg/DEk21_hcmute_embedding'
 embeddings=HuggingFaceEmbeddings(model_name=embedding_model,
                                 model_kwargs={"device": "cpu"},
                                 encode_kwargs={"normalize_embeddings": True})
-vector_store=Chroma.from_documents(splitted_docs, 
-                                    embeddings, 
-                                    # persist_directory=r"chroma_db"
-                                    )
+vector_store=Chroma(embedding_function=embeddings, 
+                    persist_directory=r"chroma_database", 
+                    collection_name="tu_tuong_hcm_384_dim"
+                    )
 
 # 4. Create retriever
 retriever=vector_store.as_retriever(
@@ -66,23 +55,47 @@ class Retriever_Tool(Tool):
         self.vector_store=vector_store
     
     def forward(self, query: str) -> str:
-        search=self.vector_store.as_retriever().invoke(query, k=2)
-        return "\n".join([doc.page_content for doc in search])
+        try:
+            search=self.vector_store.as_retriever().invoke(query, k=1)
+            if not search:
+                return "NO_MATCH"
 
+            # Format kết quả: [chunk_1]: nội dung... [chunk_2]: nội dung...
+            formatted_docs = []
+            for i, doc in enumerate(search):
+                content = doc.page_content.replace("\n", " ") # Xóa xuống dòng thừa
+                formatted_docs.append(f"[chunk_{i+1}]: {content}")
+            
+            # Trả về chuỗi đã format để AI hiểu và trích dẫn
+            return "\n\n".join(formatted_docs)
 
-
+        except Exception as e:
+            return f"LỖI: {str(e)}"
+        
 # 5. Create agent
 agent=CodeAgent(tools=[Retriever_Tool(vector_store)], model=model)
 
-# 6. Run agent
-query="Nguyên tắc quan trọng nhất trong xây dựng chỉnh đốn Đảng là gì"
+# # 6. Run agent
+# query="Nguyên tắc quan trọng nhất trong xây dựng chỉnh đốn Đảng là gì"
 
-prompt = f"""
-Quy tắc:
-1) BẮT BUỘC gọi tool retrieve trước khi trả lời.
-2) Trả lời tiếng Việt, có trích dẫn dạng [chunk_i] cho mỗi ý chính.
-3) Nếu tool trả NO_MATCH thì nói "Không có trong tài liệu".
+# prompt = f"""
+# Quy tắc:
+# 1) BẮT BUỘC gọi tool retrieve trước khi trả lời.
+# 2) Trả lời tiếng Việt.
+# 3) Nếu tool trả NO_MATCH thì nói "Không có trong tài liệu".
 
-Câu hỏi: {query}
-"""
-print(agent.run(prompt))
+# Câu hỏi: {query}
+# """
+# print(agent.run(prompt))
+
+# Build function for API
+def chat(query: str):
+    prompt = f"""
+        Quy tắc:
+        1) BẮT BUỘC gọi tool retrieve trước khi trả lời.
+        2) Trả lời tiếng Việt, có trích dẫn dạng [chunk_i] cho mỗi ý chính.
+        3) Nếu tool trả NO_MATCH thì nói "Không có trong tài liệu".
+
+        Câu hỏi: {query}
+        """
+    return agent.run(prompt)    
