@@ -72,21 +72,53 @@ class Retriever_Tool(Tool):
         except Exception as e:
             return f"LỖI: {str(e)}"
         
+import json
+class GroundingTool(Tool):
+    
+
+    name="Grounding"
+    description="""Kiểm tra xem câu trả lời có bám theo nguồn đã retrieve không
+                    Trả JSON String {CHECK: bool, PROBLEMS: [....]}"""
+    inputs={
+        "answer": {
+            "type": "string",
+            "description": "Câu trả lời cần kiểm tra",
+            "language": "vi"
+        },
+        "retrieved_docs": {
+            "type": "string",
+            "description": "Các đoạn văn đã retrieve",
+        }
+    }
+    output_type="string"
+    
+    def forward(self, answer: str, retrieved_docs: str) -> str:
+        problems=[]
+        if "[" not in answer or "]" not in answer:
+            problems.append("Thiếu citations dạng [chunk_i]")
+        elif "NO_MATCH" in retrieved_docs and "Không tìm thấy tài liệu" not in answer:
+            problems.append("Không có tài liệu liên quan nhưng answer vẫn cho ra câu trả lời") 
+        ok=len(problems)==0
+        return json.dumps({"CHECK": ok, "PROBLEMS": problems})
+
 # 5. Create agent
-agent=CodeAgent(tools=[Retriever_Tool(vector_store)], model=model)
+agent=CodeAgent(tools=[Retriever_Tool(vector_store), GroundingTool()], model=model)
 
-# # 6. Run agent
-# query="Nguyên tắc quan trọng nhất trong xây dựng chỉnh đốn Đảng là gì"
+question="Mối quan hệ giữa đạo đức và pháp luật trong xây dựng nhà nước dân chủ??"
+prompt = f"""
+Bạn là trợ lý hỗ trợ nội bộ. Quy tắc BẮT BUỘC:
+1) Luôn gọi tool retrieve trước khi trả lời.
+2) Trả lời tiếng Việt, gạch đầu dòng, mỗi ý phải có trích dẫn [chunk_i].
+3) Không được bịa. Nếu không có thông tin trong tài liệu: trả "Không có trong tài liệu".
+4) Sau khi viết draft, luôn gọi GroundingTool(answer, retrieved_docs). Nếu ok=false thì sửa.
 
-# prompt = f"""
-# Quy tắc:
-# 1) BẮT BUỘC gọi tool retrieve trước khi trả lời.
-# 2) Trả lời tiếng Việt.
-# 3) Nếu tool trả NO_MATCH thì nói "Không có trong tài liệu".
 
-# Câu hỏi: {query}
-# """
-# print(agent.run(prompt))
+Câu hỏi: {question}
+"""
+
+
+output=agent.run(prompt)
+print(output)
 
 # Build function for API
 def chat(query: str):
